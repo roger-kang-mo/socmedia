@@ -43,30 +43,27 @@ class SocialMediaScraper
       end
     end
 
-    p data
+    # p data
   end
 
   def process_url(url)
     page_name = url[0...url.index('.')] #not perfect
     network_data = []
 
-    # begin
+
     p "============================================"
     p "DATA FOR #{url}"
-      @mechanize.get("#{PROTOCOL}#{url}") do |page|
-        
-        network_data = {}
+    @mechanize.get("#{PROTOCOL}#{url}") do |page|
+      
+      network_data = {}
 
-        NETWORK_NAMES.each do |network|
-          data = self.send("get_#{network}", page, page_name)
-          network_data[network.to_sym] = data
-          p "#{network}: #{data}"
-        end
+      NETWORK_NAMES.each do |network|
+        data = self.send("get_#{network}", page, page_name)
+        network_data[network.to_sym] = data
+        p "#{network}: #{data}"
       end
+    end
     p "============================================"
-    # rescue Exception => e
-      # data = e
-    # end
 
     network_data
   end
@@ -78,17 +75,19 @@ class SocialMediaScraper
 
     graph_links = links.map { |link| link.gsub(/.+facebook.com\/pages\//, "") }.reject { |link| link.empty? }.uniq
 
+    graph_links << page_name
+
     graph_links.each do |link|
       begin
         data = open("http://graph.facebook.com/?ids=#{link}").read
-        data_likes = JSON.parse(data)[page_name]["likes"]
+        data_likes = JSON.parse(data)[link]["likes"]
         likes ||= data_likes if data_likes
       rescue OpenURI::HTTPError => e
       end
     end
 
     unless likes
-      
+
     end
 
     likes
@@ -117,14 +116,14 @@ class SocialMediaScraper
     followers = nil
     links = page.links_with(:href => TWITTER_MATCH)
     links = links.map { |link| link.href.gsub(/https:\/\/|http:\/\//, '') }.uniq
-    links.reject! { |link| link.match(/twitter.com\/share/) }
+    links = links.reject { |link| link.match(/twitter.com\/share/) }
 
     links.each do |link|
       link = add_protocol(link)
       @mechanize.get(link) do |twitter_page|
         stats_items = twitter_page.search('.js-mini-profile-stat')
         if stats_items && stats_items.any?
-          follower_text = stats_items.last.text
+          follower_text = stats_items.last.text.gsub(',', '')
           followers = follower_text if follower_text.match(/^[0-9]+(K)?$/)
         end
       end
@@ -145,15 +144,17 @@ class SocialMediaScraper
     possible_names.each do |name|
       begin
         data = open("https://api.instagram.com/v1/users/search?q=#{name}&access_token=#{IG_TOKEN}").read
+        parsed_data = JSON.parse(data)["data"]
+        if parsed_data.any?
+          user_id = parsed_data.first['id']
 
-        user_id = JSON.parse(data)["data"].first['id']
-
-        user_data = open("https://api.instagram.com/v1/users/#{user_id}?access_token=#{IG_TOKEN}").read
-        followed_by_data = JSON.parse(user_data)["data"]["counts"]["followed_by"]
-        
-        if followed_by_data
-          followed_by = followed_by_data
-          break
+          user_data = open("https://api.instagram.com/v1/users/#{user_id}?access_token=#{IG_TOKEN}").read
+          followed_by_data = JSON.parse(user_data)["data"]["counts"]["followed_by"]
+          
+          if followed_by_data
+            followed_by = followed_by_data
+            break
+          end
         end
       rescue Exception => e
         followed_by = "Error"
