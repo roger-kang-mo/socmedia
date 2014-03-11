@@ -27,7 +27,6 @@ class SocialMediaScraper
   end
 
   def process_list
-    limit = 5
     @mechanize = Mechanize.new { |agent|
       agent.user_agent_alias = 'Mac Safari'
     }
@@ -36,14 +35,7 @@ class SocialMediaScraper
     current = 0
     @urls.each do |url|
       data[url] = process_url(url)
-      current += 1
-
-      if current == limit
-        break
-      end
     end
-
-    # p data
   end
 
   def process_url(url)
@@ -51,72 +43,79 @@ class SocialMediaScraper
     network_data = []
 
 
-    p "============================================"
-    p "DATA FOR #{url}"
-    @mechanize.get("#{PROTOCOL}#{url}") do |page|
-      
-      network_data = {}
+    File.open('out.txt', 'w') do |file|
+      p "============================================"
+      p "DATA FOR #{url}"
+      file.write("============================================\n")
+      file.write("DATA FOR #{url}\n")
 
-      NETWORK_NAMES.each do |network|
-        data = self.send("get_#{network}", page, page_name)
-        network_data[network.to_sym] = data
-        p "#{network}: #{data}"
+      @mechanize.get("#{PROTOCOL}#{url}") do |page|
+        
+        network_data = {}
+
+        NETWORK_NAMES.each do |network|
+          data = self.send("get_#{network}", page, page_name)
+          network_data[network.to_sym] = data
+          p "#{network}: #{data}"
+          file.write("#{network}: #{data}\n")
+        end
       end
+      p "============================================"
+      file.write("============================================\n")
     end
-    p "============================================"
 
     network_data
   end
 
   def get_facebook(page, page_name)
-    likes = nil
+    likes = []
 
-    links = page.links_with(:href => FB_MATCH).map { |link| link.href }
-
-    graph_links = links.map { |link| link.gsub(/.+facebook.com\/pages\//, "") }.reject { |link| link.empty? }.uniq
-
-    graph_links << page_name
+    links = page.links_with(:href => FB_MATCH).map { |link| link.href.downcase }
+    
+    links = links.reject { |link| link.match(/facebook.com\/sharer.php/) }
+    links = prefer_page_name(links, page_name)
+    links = sanitize_links(links)
+    graph_links = links.map { |link| link.gsub(/.+(facebook.com\/pages\/|facebook.com\/)/, "") }.reject { |link| link.empty? }.uniq
+    graph_links.map! { |link| link.index("/") ? link[0...link.index("/")] : link }
 
     graph_links.each do |link|
       begin
         data = open("http://graph.facebook.com/?ids=#{link}").read
-        data_likes = JSON.parse(data)[link]["likes"]
-        likes ||= data_likes if data_likes
+        parsed_data = JSON.parse(data)
+        if parsed_data.any? && parsed_data[link]
+          data_likes = parsed_data[link]["likes"] 
+          likes << data_likes if data_likes
+        end
       rescue OpenURI::HTTPError => e
       end
     end
 
-    unless likes
-
-    end
-
-    likes
+    likes.uniq
   end
 
   def get_gplus(page, page_name)
-    pluses = nil
-    links = page.links_with(:href => GPLUS_MATCH).map { |link| link.href }.uniq
+    pluses = []
+    links = page.links_with(:href => GPLUS_MATCH).map { |link| link.href.downcase }.uniq
 
     links.each do |link|
       link = add_protocol(link)
       @mechanize.get(link) do |gplus_page|
-        plus_text = gplus_page.search(".o5a").first.text.gsub(/[a-zA-Z]+/, '').strip
-        pluses ||= plus_text if plus_text
+        plus_text = gplus_page.search(".o5a").first
+        plus_text = plus_text.text.gsub(/[a-zA-Z]+/, '').strip if plus_text
+        pluses << plus_text if plus_text
       end
     end
 
-    unless pluses
-
-    end
-
-    pluses
+    pluses.uniq
   end
 
   def get_twitter(page, page_name)
-    followers = nil
+    followers = []
     links = page.links_with(:href => TWITTER_MATCH)
-    links = links.map { |link| link.href.gsub(/https:\/\/|http:\/\//, '') }.uniq
-    links = links.reject { |link| link.match(/twitter.com\/share/) }
+    links = links.map { |link| link.href.downcase.gsub(/https:\/\/|http:\/\//, '') }.uniq
+    links = links.reject { |link| link.match(/twitter.com\/(share|intent|search)/) }
+    links = links.reject { |link| link.match(/twitter.com\/.+\/statuses/) }
+    links = sanitize_links(links)
 
     links.each do |link|
       link = add_protocol(link)
@@ -124,20 +123,23 @@ class SocialMediaScraper
         stats_items = twitter_page.search('.js-mini-profile-stat')
         if stats_items && stats_items.any?
           follower_text = stats_items.last.text.gsub(',', '')
-          followers = follower_text if follower_text.match(/^[0-9]+(K)?$/)
+          followers << follower_text if follower_text.match(/^[0-9]+(K)?$/)
+          break;
         end
       end
     end
 
-    followers
+    followers.uniq
   end
 
   def get_instagram(page, page_name)
-    followed_by = nil
+    followed_by = []
 
     links = page.links_with(:href => IG_MATCH).map { |link| link.href }
     links = links.map { |link| link.gsub(/https:\/\/|http:\/\//, '') }.uniq
+    links = sanitize_links(links)
     possible_names = links.map { |link| link.gsub(IG_MATCH, '').gsub(/\//, '')}.uniq
+
 
     possible_names << page_name
 
@@ -152,7 +154,7 @@ class SocialMediaScraper
           followed_by_data = JSON.parse(user_data)["data"]["counts"]["followed_by"]
           
           if followed_by_data
-            followed_by = followed_by_data
+            followed_by << followed_by_data
             break
           end
         end
@@ -160,7 +162,7 @@ class SocialMediaScraper
         followed_by = "Error"
       end
     end
-    followed_by
+    followed_by.uniq
   end
 
   def get_linkedin(page, page_name)
@@ -168,24 +170,47 @@ class SocialMediaScraper
   end
 
   def get_pinterest(page, page_name)
-    likes = nil
+    likes = []
+    followers = []
     links = page.links_with(:href => /pinterest.com\//).map { |link| link.href }
-    links = links.reject { |link| link.match(/pinterest.com\/pin\//) }
+    links = links.reject { |link| link.match(/(pinterest.com\/pin\/|javascript)/) }
+    links = sanitize_links(links)
     links = links.map { |link| link.gsub(/https:\/\/|http:\/\//, '') }.uniq
+
+    links = prefer_page_name(links, page_name)
 
     links.each do |link|
       link = add_protocol(link)
       @mechanize.get(link) do |pinterest_page|
-        user_stat = pinterest_page.search('.userStats').first.children[4]
+        user_stat = pinterest_page.search('.userStats').first
+        if user_stat
+          user_stat = user_stat.children[4] 
 
-        likes = user_stat.text.gsub(/[a-zA-Z]+/, '').strip #likes
+          likes_text = user_stat.text
+          likes << likes_text.gsub(/[a-zA-Z\n]+/, '').strip if likes_text #likes
 
-        follower_stat = pinterest_page.search('.followersFollowingLinks').first
-        followers = follower_stat.search('.FollowerCount').text
-        followers = followers.gsub(/[a-zA-Z]+/, '').strip #followers
+          follower_stat = pinterest_page.search('.followersFollowingLinks').first
+          followers_text = follower_stat.search('.FollowerCount').text
+          followers << followers_text.gsub(/[a-zA-Z\n]+/, '').strip if followers_text #followers
+        end
       end
     end
-    likes
+    likes.uniq
+  end
+
+  def prefer_page_name(links, page_name)
+    links.each_with_index do |link, index|
+      if link.include? page_name
+        links.unshift(link).uniq unless index == 0
+        break
+      end
+    end
+
+    links
+  end
+
+  def sanitize_links(links)
+    links.map { |link| link.gsub(/\r\n|\r|\n/, '') }
   end
 
   def add_protocol(link)
