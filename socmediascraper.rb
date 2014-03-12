@@ -32,9 +32,13 @@ class SocialMediaScraper
     }
 
     data = {}
-    current = 0
-    @urls.each do |url|
-      data[url] = process_url(url)
+
+    File.open('out.txt', 'w') do |file_obj|
+      @file = file_obj
+      @file.write("website, facebook_links, facebook_likes, gplus_links, gplus_pluses, instagram_links, instagram_followers, twitter_links, twitter_followers, pinterest_links, pinterest_followers")
+      @urls.each do |url|
+        data[url] = process_url(url)
+      end
     end
   end
 
@@ -42,27 +46,24 @@ class SocialMediaScraper
     page_name = url[0...url.index('.')] #not perfect
     network_data = []
 
+    p "============================================"
+    p "DATA FOR #{url}"
+    @file.write(url)
 
-    File.open('out.txt', 'w') do |file|
-      p "============================================"
-      p "DATA FOR #{url}"
-      file.write("============================================\n")
-      file.write("DATA FOR #{url}\n")
+    @mechanize.get(add_protocol(url)) do |page|
+      
+      network_data = {}
 
-      @mechanize.get("#{PROTOCOL}#{url}") do |page|
-        
-        network_data = {}
-
-        NETWORK_NAMES.each do |network|
-          data = self.send("get_#{network}", page, page_name)
-          network_data[network.to_sym] = data
-          p "#{network}: #{data}"
-          file.write("#{network}: #{data}\n")
-        end
+      NETWORK_NAMES.each do |network|
+        links, data = self.send("get_#{network}", page, page_name)
+        network_data[network.to_sym] = data
+        p "#{network}: #{data}"
+        @file.write(", #{links}, #{data}")
       end
-      p "============================================"
-      file.write("============================================\n")
     end
+    p "============================================"
+    # file.write("============================================\n")
+
 
     network_data
   end
@@ -87,10 +88,11 @@ class SocialMediaScraper
           likes << data_likes if data_likes
         end
       rescue OpenURI::HTTPError => e
+        puts e
       end
     end
 
-    likes.uniq
+    [links, likes.uniq]
   end
 
   def get_gplus(page, page_name)
@@ -99,14 +101,18 @@ class SocialMediaScraper
 
     links.each do |link|
       link = add_protocol(link)
-      @mechanize.get(link) do |gplus_page|
-        plus_text = gplus_page.search(".o5a").first
-        plus_text = plus_text.text.gsub(/[a-zA-Z]+/, '').strip if plus_text
-        pluses << plus_text if plus_text
+      begin
+        @mechanize.get(link) do |gplus_page|
+          plus_text = gplus_page.search(".o5a").first
+          plus_text = plus_text.text.gsub(/[a-zA-Z]+/, '').strip if plus_text
+          pluses << plus_text if plus_text
+        end
+      rescue Exception => e
+        puts e
       end
     end
 
-    pluses.uniq
+    [links, pluses.uniq]
   end
 
   def get_twitter(page, page_name)
@@ -119,17 +125,21 @@ class SocialMediaScraper
 
     links.each do |link|
       link = add_protocol(link)
-      @mechanize.get(link) do |twitter_page|
-        stats_items = twitter_page.search('.js-mini-profile-stat')
-        if stats_items && stats_items.any?
-          follower_text = stats_items.last.text.gsub(',', '')
-          followers << follower_text if follower_text.match(/^[0-9]+(K)?$/)
-          break;
+      begin
+        @mechanize.get(link) do |twitter_page|
+          stats_items = twitter_page.search('.js-mini-profile-stat')
+          if stats_items && stats_items.any?
+            follower_text = stats_items.last.text.gsub(',', '')
+            followers << follower_text if follower_text.match(/^[0-9]+(K)?$/)
+            break;
+          end
         end
+      rescue Exception => e
+        puts e
       end
     end
 
-    followers.uniq
+    [links, followers.uniq]
   end
 
   def get_instagram(page, page_name)
@@ -159,10 +169,10 @@ class SocialMediaScraper
           end
         end
       rescue Exception => e
-        followed_by = "Error"
+        puts e
       end
     end
-    followed_by.uniq
+    [links, followed_by.uniq]
   end
 
   def get_linkedin(page, page_name)
@@ -181,21 +191,26 @@ class SocialMediaScraper
 
     links.each do |link|
       link = add_protocol(link)
-      @mechanize.get(link) do |pinterest_page|
-        user_stat = pinterest_page.search('.userStats').first
-        if user_stat
-          user_stat = user_stat.children[4] 
+      begin
+        @mechanize.get(link) do |pinterest_page|
+          user_stat = pinterest_page.search('.userStats').first
+          if user_stat
+            user_stat = user_stat.children[4] 
 
-          likes_text = user_stat.text
-          likes << likes_text.gsub(/[a-zA-Z\n]+/, '').strip if likes_text #likes
+            likes_text = user_stat.text
+            likes << likes_text.gsub(/[a-zA-Z\n]+/, '').strip if likes_text #likes
 
-          follower_stat = pinterest_page.search('.followersFollowingLinks').first
-          followers_text = follower_stat.search('.FollowerCount').text
-          followers << followers_text.gsub(/[a-zA-Z\n]+/, '').strip if followers_text #followers
+            follower_stat = pinterest_page.search('.followersFollowingLinks').first
+            followers_text = follower_stat.search('.FollowerCount').text
+            followers << followers_text.gsub(/[a-zA-Z\n]+/, '').strip if followers_text #followers
+          end
         end
+      rescue Exception => e
+        puts e
       end
     end
-    likes.uniq
+
+    [links, followers.uniq]
   end
 
   def prefer_page_name(links, page_name)
