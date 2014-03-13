@@ -8,6 +8,9 @@ class SocialMediaScraper
   # NETWORK_NAMES = ["facebook", "gplus", "instagram", "twitter", "linkedin", "pinterest"]
   NETWORK_NAMES = ["facebook", "gplus", "instagram", "twitter", "pinterest"]
 
+  COLUMN_HEADERS = "website| facebook_links| facebook_likes| gplus_links| gplus_pluses| instagram_links| instagram_followers| twitter_links| twitter_followers| pinterest_links| pinterest_followers\n"
+  ERRORED_SITE_CONTENTS = "[]|[]|[]|[]|[]|[]|[]|[]|[]|[]|[]"
+
   FB_MATCH = /facebook.com/
   TWITTER_MATCH = /twitter.com/
   GPLUS_MATCH = /plus.google.com/
@@ -35,7 +38,7 @@ class SocialMediaScraper
 
     File.open('out.txt', 'w') do |file_obj|
       @file = file_obj
-      @file.write("website, facebook_links, facebook_likes, gplus_links, gplus_pluses, instagram_links, instagram_followers, twitter_links, twitter_followers, pinterest_links, pinterest_followers")
+      # @file.write(COLUMN_HEADERS)
       @urls.each do |url|
         data[url] = process_url(url)
       end
@@ -45,24 +48,29 @@ class SocialMediaScraper
   def process_url(url)
     page_name = url[0...url.index('.')] #not perfect
     network_data = []
+    to_write = url
 
     p "============================================"
     p "DATA FOR #{url}"
-    @file.write(url)
+    # @file.write(url)
+    begin
+      @mechanize.get(add_protocol(url)) do |page|
+        
+        network_data = {}
 
-    @mechanize.get(add_protocol(url)) do |page|
-      
-      network_data = {}
-
-      NETWORK_NAMES.each do |network|
-        links, data = self.send("get_#{network}", page, page_name)
-        network_data[network.to_sym] = data
-        p "#{network}: #{data}"
-        @file.write(", #{links}, #{data}")
+        NETWORK_NAMES.each do |network|
+          links, data = self.send("get_#{network}", page, page_name)
+          network_data[network.to_sym] = data
+          p "#{network}: #{data}"
+          # @file.write(", #{links}, #{data}")
+          to_write << "| #{links}| #{data}"
+        end
       end
+      p "============================================"
+      @file.write("#{to_write}\n")
+    rescue Exception => e
+      @file.write("#{url} - errored| #{ERRORED_SITE_CONTENTS}\n")
     end
-    p "============================================"
-    # file.write("============================================\n")
 
 
     network_data
